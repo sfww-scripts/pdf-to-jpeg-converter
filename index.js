@@ -5,11 +5,15 @@ const { fromBuffer } = require('pdf2pic');
 const fs = require('fs').promises;
 const path = require('path');
 const os = require('os');
+const express = require('express');
+
+const app = express();
+app.use(express.json());
 
 const storage = new Storage();
 const drive = google.drive({ version: 'v3' });
 
-exports.convertPdfToJpeg = async (req, res) => {
+app.post('/', async (req, res) => {
   try {
     const { fileId, folderId, accessToken, fileName } = req.body;
 
@@ -60,4 +64,9 @@ exports.convertPdfToJpeg = async (req, res) => {
     console.error('Error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
-};
+});
+
+const port = process.env.PORT || 8080;
+app.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
+});
