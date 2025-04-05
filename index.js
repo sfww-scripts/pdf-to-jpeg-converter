@@ -26,16 +26,23 @@ app.post('/', async (req, res) => {
     auth.setCredentials({ access_token: accessToken });
 
     console.log('Fetching file from Drive with fileId:', fileId);
-    const driveResponse = await drive.files.get(
-      { fileId, alt: 'media' },
-      { auth, responseType: 'arraybuffer' }
-    );
+    let driveResponse;
+    try {
+      driveResponse = await drive.files.get(
+        { fileId, alt: 'media' },
+        { auth, responseType: 'arraybuffer' }
+      );
+    } catch (error) {
+      console.error('Drive API error:', error.message);
+      console.error('Drive API error details:', error);
+      return res.status(500).json({ success: false, error: 'Failed to fetch file from Drive', details: error.message });
+    }
 
     console.log('Drive response status:', driveResponse.status);
     console.log('Drive response headers:', driveResponse.headers);
     if (!driveResponse.data) {
       console.error('Drive response data is undefined');
-      return res.status(500).json({ success: false, error: 'Failed to fetch file from Drive: data is undefined' });
+      return res.status(500).json({ success: false, error: 'Drive response data is undefined' });
     }
 
     const pdfBuffer = Buffer.from(driveResponse.data);
@@ -82,7 +89,8 @@ app.post('/', async (req, res) => {
 
     res.status(200).json({ success: true, jpegs });
   } catch (error) {
-    console.error('Error in Cloud Run function:', error);
+    console.error('Error in Cloud Run function:', error.message);
+    console.error('Error details:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
