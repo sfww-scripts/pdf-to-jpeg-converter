@@ -34,12 +34,12 @@ app.post('/', async (req, res) => {
       );
     } catch (error) {
       console.error('Drive API error:', error.message);
-      console.error('Drive API error details:', error);
+      console.error('Drive API error details:', JSON.stringify(error, null, 2));
       return res.status(500).json({ success: false, error: 'Failed to fetch file from Drive', details: error.message });
     }
 
     console.log('Drive response status:', driveResponse.status);
-    console.log('Drive response headers:', driveResponse.headers);
+    console.log('Drive response headers:', JSON.stringify(driveResponse.headers, null, 2));
     if (!driveResponse.data) {
       console.error('Drive response data is undefined');
       return res.status(500).json({ success: false, error: 'Drive response data is undefined' });
@@ -90,7 +90,7 @@ app.post('/', async (req, res) => {
     res.status(200).json({ success: true, jpegs });
   } catch (error) {
     console.error('Error in Cloud Run function:', error.message);
-    console.error('Error details:', error);
+    console.error('Error details:', JSON.stringify(error, null, 2));
     res.status(500).json({ success: false, error: error.message });
   }
 });
