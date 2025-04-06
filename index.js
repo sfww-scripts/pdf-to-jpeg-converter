@@ -1,5 +1,15 @@
-const { google } = require('googleapis');
-const express = require('express');
+console.log('Loading dependencies...');
+
+try {
+  const { google } = require('googleapis');
+  console.log('Loaded googleapis');
+  const express = require('express');
+  console.log('Loaded express');
+} catch (error) {
+  console.error('Error loading dependencies:', error.message);
+  console.error('Error details:', JSON.stringify(error, null, 2));
+  process.exit(1);
+}
 
 console.log('Starting application...');
 
