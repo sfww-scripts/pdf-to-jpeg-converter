@@ -1,12 +1,16 @@
 FROM node:18
 
-# Install required system dependencies
+# Install build tools and dependencies for canvas
 RUN apt-get update && apt-get install -y \
-    poppler-utils \
-    imagemagick \
-    libpixman-1-dev \
+    build-essential \
+    pkg-config \
     libcairo2-dev \
     libpango1.0-dev \
+    libjpeg-dev \
+    libgif-dev \
+    librsvg2-dev \
+    poppler-utils \
+    imagemagick \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
