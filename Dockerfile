@@ -4,6 +4,9 @@ FROM node:18
 RUN apt-get update && apt-get install -y \
     poppler-utils \
     imagemagick \
+    libpixman-1-dev \
+    libcairo2-dev \
+    libpango1.0-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
