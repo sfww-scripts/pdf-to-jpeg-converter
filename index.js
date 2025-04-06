@@ -7,13 +7,24 @@ const path = require('path');
 const os = require('os');
 const express = require('express');
 
+console.log('Starting container initialization...');
 console.log('Loading dependencies...');
 
-// Check that all dependencies are loaded correctly
 try {
+  console.log('Loading googleapis...');
+  const googleModule = require('googleapis');
   console.log('Loaded googleapis');
+  
+  console.log('Loading pdf-lib...');
+  const pdfLibModule = require('pdf-lib');
   console.log('Loaded pdf-lib');
+  
+  console.log('Loading pdf-to-img...');
+  const pdfToImgModule = require('pdf-to-img');
   console.log('Loaded pdf-to-img');
+  
+  console.log('Loading express...');
+  const expressModule = require('express');
   console.log('Loaded express');
 } catch (error) {
   console.error('Error loading dependencies:', error.message);
@@ -27,6 +38,7 @@ try {
   const app = express();
   
   // Increase the payload size limit for JSON requests
+  console.log('Configuring Express middleware...');
   app.use(express.json({ limit: '50mb' }));
   
   // Add detailed error handling for large payloads
@@ -43,12 +55,14 @@ try {
   });
 
   // Health check endpoint for Cloud Run
+  console.log('Setting up health check endpoint...');
   app.get('/health', (req, res) => {
     console.log('Health check requested');
     res.status(200).json({ status: 'OK' });
   });
 
   // Create a Google Drive client
+  console.log('Setting up Google Drive client...');
   const drive = google.drive({ version: 'v3' });
 
   app.post('/', async (req, res) => {
@@ -100,6 +114,7 @@ try {
 
       // Save the PDF to a temporary file
       const tempPdfPath = path.join(os.tmpdir(), `${fileName}_temp.pdf`);
+      console.log(`Writing PDF to temporary file: ${tempPdfPath}`);
       await fsPromises.writeFile(tempPdfPath, pdfBuffer);
 
       // Load the PDF document to get page count
@@ -120,6 +135,7 @@ try {
       console.log('PDF page count:', pageCount);
 
       // Set up Google Drive authentication
+      console.log('Setting up Google Drive authentication...');
       const auth = new google.auth.OAuth2();
       auth.setCredentials({ access_token: accessToken });
 
@@ -131,6 +147,7 @@ try {
         try {
           // Convert the page to JPEG
           const outputPath = path.join(os.tmpdir(), `${fileName}_page_${i}`);
+          console.log(`Converting PDF page ${i} to JPEG at ${outputPath}`);
           await PdfToImg.convert(tempPdfPath, {
             outputDir: os.tmpdir(),
             outputFormat: 'jpeg',
@@ -142,6 +159,7 @@ try {
           });
 
           const tempJpegPath = `${outputPath}.jpg`;
+          console.log(`Checking if JPEG file exists at ${tempJpegPath}`);
           if (!fs.existsSync(tempJpegPath)) {
             throw new Error(`JPEG file not created at ${tempJpegPath}`);
           }
@@ -171,6 +189,7 @@ try {
           });
 
           // Clean up temporary file
+          console.log(`Cleaning up temporary JPEG file: ${tempJpegPath}`);
           await fsPromises.unlink(tempJpegPath);
         } catch (pageError) {
           console.error(`Error processing page ${i}:`, pageError.message);
@@ -179,6 +198,7 @@ try {
       }
 
       // Clean up the temporary PDF file
+      console.log(`Cleaning up temporary PDF file: ${tempPdfPath}`);
       try {
         await fsPromises.unlink(tempPdfPath);
       } catch (unlinkError) {
@@ -210,6 +230,7 @@ try {
   });
 
   const port = process.env.PORT || 8080;
+  console.log(`Starting server on port ${port}...`);
   app.listen(port, () => {
     console.log(`Server started and listening on port ${port}`);
   });
