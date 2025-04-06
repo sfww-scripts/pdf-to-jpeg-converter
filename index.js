@@ -1,20 +1,41 @@
+const { google } = require('googleapis');
 const express = require('express');
 
-const app = express();
-app.use(express.json());
+console.log('Starting application...');
 
-// Health check endpoint for Cloud Run
-app.get('/health', (req, res) => {
-  console.log('Health check requested');
-  res.status(200).json({ status: 'OK' });
+try {
+  const app = express();
+  app.use(express.json());
+
+  // Health check endpoint for Cloud Run
+  app.get('/health', (req, res) => {
+    console.log('Health check requested');
+    res.status(200).json({ status: 'OK' });
+  });
+
+  app.post('/', (req, res) => {
+    console.log('POST request received:', req.body);
+    res.status(200).json({ success: true, message: 'Test endpoint' });
+  });
+
+  const port = process.env.PORT || 8080;
+  app.listen(port, () => {
+    console.log(`Server started and listening on port ${port}`);
+  });
+} catch (error) {
+  console.error('Fatal error during server startup:', error.message);
+  console.error('Error details:', JSON.stringify(error, null, 2));
+  process.exit(1);
+}
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error.message);
+  console.error('Error details:', JSON.stringify(error, null, 2));
+  process.exit(1);
 });
 
-app.get('/', (req, res) => {
-  console.log('Root endpoint requested');
-  res.status(200).json({ message: 'Server is running' });
-});
-
-const port = process.env.PORT || 8080;
-app.listen(port, () => {
-  console.log(`Server started and listening on port ${port}`);
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise);
+  console.error('Reason:', reason);
+  process.exit(1);
 });
