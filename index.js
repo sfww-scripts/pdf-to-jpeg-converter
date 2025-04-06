@@ -1,102 +1,90 @@
 const express = require('express');
+const bodyParser = require('body-parser');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { PDFImage } = require('pdf-to-img');
+const { google } = require('googleapis');
 
-console.log('Starting container initialization...');
-console.log('Loading dependencies...');
+const app = express();
+app.use(bodyParser.json({ limit: '50mb' }));
 
-try {
-  console.log('Loading express...');
-  const expressModule = require('express');
-  console.log('Loaded express');
-} catch (error) {
-  console.error('Error loading dependencies:', error.message);
-  console.error('Error details:', JSON.stringify(error, null, 2));
-  process.exit(1);
-}
+// Health Check Endpoint
+app.get('/', (req, res) => {
+  console.log('Root endpoint accessed');
+  res.status(200).send('Service Online');
+});
 
-console.log('Starting application...');
+app.get('/health', (req, res) => {
+  console.log('Health check requested');
+  res.status(200).json({ status: 'OK' });
+});
 
-try {
-  const app = express();
+app.post('/', async (req, res) => {
+  console.log('PDF to JPEG conversion requested');
   
-  console.log('Configuring Express middleware...');
-  app.use(express.json({ limit: '50mb' }));
-  
-  app.use((err, req, res, next) => {
-    if (err.type === 'entity.too.large') {
-      console.error('Request entity too large');
-      return res.status(413).json({
-        success: false,
-        error: 'Request entity too large',
-        message: 'The file is too large to process.'
-      });
+  try {
+    const { folderId, accessToken, fileName, fileData } = req.body;
+    if (!folderId || !accessToken || !fileName || !fileData) {
+      console.error('Missing required parameters');
+      return res.status(400).json({ success: false, error: 'Missing required fields' });
     }
-    next(err);
-  });
 
-  // Add early route for verification
-  app.get('/', (req, res) => {
-    console.log('Root endpoint accessed');
-    res.status(200).send('Service Online');
-  });
+    // Save PDF temporarily
+    const tempDir = os.tmpdir();
+    const tempPdfPath = path.join(tempDir, `${fileName}.pdf`);
+    fs.writeFileSync(tempPdfPath, Buffer.from(fileData, 'base64'));
+    console.log(`Saved PDF to ${tempPdfPath}`);
 
-  // Add container startup verification
-  let isReady = false;
-  setTimeout(() => {
-    isReady = true;
-    console.log('Container initialization complete');
-  }, 5000);
+    // Convert PDF to JPEG
+    const outputDir = path.join(tempDir, `${fileName}-images`);
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
+    const images = await PDFImage.convert(tempPdfPath, { outputdir: outputDir, format: 'jpg', scale: 2 });
+    console.log(`Converted PDF to ${images.length} JPEGs`);
 
-  console.log('Setting up health check endpoint...');
-  app.get('/health', (req, res) => {
-    console.log('Health check requested');
-    res.status(isReady ? 200 : 503).json({ 
-      status: isReady ? 'OK' : 'INITIALIZING',
-      dependencies: {
-        express: !!express
-      }
-    });
-  });
-  
-  // Add POST endpoint to handle PDF-to-JPEG conversion requests
-  app.post('/', async (req, res) => {
-    console.log('PDF to JPEG conversion requested');
-    
-    try {
-      const { folderId, accessToken, fileName } = req.body;
-      
-      if (!folderId || !accessToken || !fileName) {
-        return res.status(400).json({
-          success: false,
-          error: 'Missing required parameters'
-        });
-      }
-      
-      // Instead of actual conversion, return a mock successful response
-      console.log(`Mock conversion of ${fileName} completed successfully`);
-      
-      return res.status(200).json({
-        success: true,
-        jpegs: []  // Empty array since we're not actually creating JPEGs
+    // Authenticate with Google Drive
+    const auth = new google.auth.OAuth2();
+    auth.setCredentials({ access_token: accessToken });
+    const drive = google.drive({ version: 'v3', auth });
+
+    // Upload JPEGs to Drive
+    const jpegResults = [];
+    for (let i = 0; i < images.length; i++) {
+      const imagePath = images[i];
+      const imageStream = fs.createReadStream(imagePath);
+      const uploaded = await drive.files.create({
+        requestBody: {
+          name: `${fileName}_page${i + 1}.jpg`,
+          parents: [folderId],
+          mimeType: 'image/jpeg'
+        },
+        media: {
+          mimeType: 'image/jpeg',
+          body: imageStream
+        },
+        fields: 'id'
       });
-    } catch (error) {
-      console.error('Error in PDF to JPEG conversion:', error.message);
-      return res.status(500).json({
-        success: false,
-        error: error.message
+      console.log(`Uploaded page ${i + 1} to Drive, fileId: ${uploaded.data.id}`);
+      jpegResults.push({
+        page: i + 1,
+        fileId: uploaded.data.id
       });
+      fs.unlinkSync(imagePath); // Clean up
     }
-  });
+    fs.unlinkSync(tempPdfPath); // Clean up PDF
 
-  const port = process.env.PORT || 8080;
-  console.log(`Starting server on port ${port}...`);
-  app.listen(port, () => {
-    console.log(`Server started and listening on port ${port}`);
-  });
-} catch (error) {
-  console.error('Fatal error during server startup:', error.message);
-  console.error('Error details:', JSON.stringify(error, null, 2));
-  process.exit(1);
-}
+    res.status(200).json({ success: true, jpegs: jpegResults });
+  } catch (error) {
+    console.error('❌ Error in PDF-to-JPEG conversion:', error.message);
+    console.error('Stack trace:', error.stack);
+    res.status(500).json({ success: false, error: error.message, stack: error.stack });
+  }
+});
+
+const port = process.env.PORT || 8080;
+app.listen(port, () => {
+  console.log(`🚀 Server started and listening on port ${port}`);
+});
 
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error.message);
