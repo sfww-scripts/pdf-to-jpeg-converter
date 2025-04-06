@@ -1,6 +1,6 @@
 const { google } = require('googleapis');
 const { PDFDocument } = require('pdf-lib');
-const { fromBuffer } = require('pdf2pic');
+const PdfToImg = require('pdf-to-img');
 const fs = require('fs');
 const fsPromises = fs.promises;
 const path = require('path');
@@ -13,8 +13,7 @@ console.log('Loading dependencies...');
 try {
   console.log('Loaded googleapis');
   console.log('Loaded pdf-lib');
-  console.log('Loaded pdf2pic');
-  console.log('Loaded gm');
+  console.log('Loaded pdf-to-img');
   console.log('Loaded express');
 } catch (error) {
   console.error('Error loading dependencies:', error.message);
@@ -124,27 +123,28 @@ try {
       const auth = new google.auth.OAuth2();
       auth.setCredentials({ access_token: accessToken });
 
-      // Set up PDF to image conversion options
-      const convert = fromBuffer(pdfBuffer, {
-        format: 'jpeg',
-        width: 1200,
-        height: 1600,
-        density: 150,
-        savePath: os.tmpdir()
-      });
-
-      // Convert each page and upload to Drive
+      // Convert each page to JPEG using pdf-to-img
       const jpegs = [];
       for (let i = 1; i <= pageCount; i++) {
         console.log(`Converting page ${i} to JPEG`);
         
         try {
           // Convert the page to JPEG
-          const output = await convert(i, { responseType: 'buffer' });
-          
-          // Save the JPEG to a temporary file
-          const tempJpegPath = path.join(os.tmpdir(), `${fileName}_page_${i}.jpeg`);
-          await fsPromises.writeFile(tempJpegPath, output.buffer);
+          const outputPath = path.join(os.tmpdir(), `${fileName}_page_${i}`);
+          await PdfToImg.convert(tempPdfPath, {
+            outputDir: os.tmpdir(),
+            outputFormat: 'jpeg',
+            baseName: `${fileName}_page_${i}`,
+            page: i,
+            width: 1200,
+            height: 1600,
+            density: 150
+          });
+
+          const tempJpegPath = `${outputPath}.jpg`;
+          if (!fs.existsSync(tempJpegPath)) {
+            throw new Error(`JPEG file not created at ${tempJpegPath}`);
+          }
 
           // Upload the JPEG to Google Drive
           console.log(`Uploading JPEG for page ${i} to Drive`);

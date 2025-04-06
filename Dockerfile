@@ -1,7 +1,7 @@
 FROM node:18
 
-# Install GraphicsMagick
-RUN apt-get update && apt-get install -y graphicsmagick
+# Install Poppler utilities (required by pdf-to-img)
+RUN apt-get update && apt-get install -y poppler-utils
 
 WORKDIR /usr/src/app
 COPY package*.json ./
