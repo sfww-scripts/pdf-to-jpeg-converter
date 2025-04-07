@@ -16,7 +16,7 @@ const { DocumentProcessorServiceClient } = require('@google-cloud/documentai').v
 const { ImageAnnotatorClient } = require('@google-cloud/vision');
 
 // API Keys
-const GOOGLE_API_KEY = 'AIzaSyDWhFf9rueP0kTUn0pn426DUd2UOZYHUdU';
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || '';
 const ADOBE_CLIENT_ID = '6423c4b51f724d7eb5df627761fbd600';
 const ADOBE_CLIENT_SECRET = 'p8e-U-e7umgA0jyemYegsSm65A1UY8QtlgKw';
 
