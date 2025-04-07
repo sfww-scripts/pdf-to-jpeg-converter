@@ -1,0 +1,15 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/$PROJECT_ID/pdf-to-jpeg-converter', '.']
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/$PROJECT_ID/pdf-to-jpeg-converter']
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: 'gcloud'
+  args: ['run', 'deploy', 'pdf-to-jpeg-converter', 
+         '--image', 'gcr.io/$PROJECT_ID/pdf-to-jpeg-converter', 
+         '--platform', 'managed', 
+         '--region', 'us-central1', 
+         '--allow-unauthenticated',
+         '--set-secrets', 'CLOUDCONVERT_API_KEY=cloudconvert-api-key:latest,GOOGLE_API_KEY=google-api-key:latest,ADOBE_CLIENT_ID=adobe-client-id:latest,ADOBE_CLIENT_SECRET=adobe-client-secret:latest']
+images:
+- 'gcr.io/$PROJECT_ID/pdf-to-jpeg-converter'
