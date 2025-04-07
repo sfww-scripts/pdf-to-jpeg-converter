@@ -17,8 +17,8 @@ const { ImageAnnotatorClient } = require('@google-cloud/vision');
 
 // API Keys
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || '';
-const ADOBE_CLIENT_ID = '6423c4b51f724d7eb5df627761fbd600';
-const ADOBE_CLIENT_SECRET = 'p8e-U-e7umgA0jyemYegsSm65A1UY8QtlgKw';
+const ADOBE_CLIENT_ID = process.env.ADOBE_CLIENT_ID || '';
+const ADOBE_CLIENT_SECRET = process.env.ADOBE_CLIENT_SECRET || '';
 
 const gmWithPath = gm.subClass({ imageMagick: false });
 const CLOUDCONVERT_API_KEY = process.env.CLOUDCONVERT_API_KEY;
