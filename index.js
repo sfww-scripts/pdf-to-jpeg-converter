@@ -12,17 +12,30 @@ const gm = require('gm');
 const pdfjsLib = require('pdfjs-dist');
 const { createCanvas } = require('canvas');
 const axios = require('axios');
+const { DocumentProcessorServiceClient } = require('@google-cloud/documentai').v1;
+const { ImageAnnotatorClient } = require('@google-cloud/vision');
 
-// Configure gm to use GraphicsMagick
+// API Keys
+const GOOGLE_API_KEY = 'AIzaSyDWhFf9rueP0kTUn0pn426DUd2UOZYHUdU';
+const ADOBE_CLIENT_ID = '6423c4b51f724d7eb5df627761fbd600';
+const ADOBE_CLIENT_SECRET = 'p8e-U-e7umgA0jyemYegsSm65A1UY8QtlgKw';
+
 const gmWithPath = gm.subClass({ imageMagick: false });
+const CLOUDCONVERT_API_KEY = process.env.CLOUDCONVERT_API_KEY;
+if (!CLOUDCONVERT_API_KEY) {
+  console.error('CLOUDCONVERT_API_KEY not set');
+  throw new Error('CLOUDCONVERT_API_KEY environment variable is not set');
+}
 
-// CloudConvert API Key (replace with your actual key)
-const CLOUDCONVERT_API_KEY = 'your-cloudconvert-api-key-here'; // Replace with your CloudConvert API key
+const documentaiClient = new DocumentProcessorServiceClient({
+  projectId: 'review-plugin-api-421208',
+  location: 'us',
+});
+const visionClient = new ImageAnnotatorClient();
 
 const app = express();
 app.use(bodyParser.json({ limit: '100mb' }));
 
-// Health Check Endpoints
 app.get('/', (req, res) => {
   console.log('Root endpoint accessed');
   res.status(200).send('Service Online');
@@ -37,7 +50,6 @@ app.post('/', async (req, res) => {
   console.log('File to JPEG conversion requested');
   
   try {
-    // Log the incoming request size
     console.log(`Request body size: ${JSON.stringify(req.body).length} bytes`);
     
     // Validate request body
@@ -45,6 +57,12 @@ app.post('/', async (req, res) => {
     if (!folderId || !accessToken || !fileName || !fileData) {
       console.error('Missing required parameters');
       return res.status(400).json({ success: false, error: 'Missing required fields' });
+    }
+
+    // Validate fileData as base64
+    if (!/^[A-Za-z0-9+/=]+$/.test(fileData)) {
+      console.error('Invalid base64 data');
+      return res.status(400).json({ success: false, error: 'Invalid base64 data' });
     }
 
     console.log(`Received file: ${fileName}, fileData length: ${fileData.length}`);
@@ -82,7 +100,6 @@ app.post('/', async (req, res) => {
         const outputFormat = 'pdf';
         const tempPdfFilePath = path.join(tempDir, `${path.basename(fileName, fileExtension)}.pdf`);
 
-        // Create CloudConvert job to convert Excel/Word to PDF
         const jobResponse = await axios.post('https://api.cloudconvert.com/v2/jobs', {
           tasks: {
             'import-file': {
@@ -110,10 +127,9 @@ app.post('/', async (req, res) => {
 
         const jobId = jobResponse.data.data.id;
 
-        // Wait for the job to complete
         let jobStatus;
         do {
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+          await new Promise(resolve => setTimeout(resolve, 1000));
           const statusResponse = await axios.get(`https://api.cloudconvert.com/v2/jobs/${jobId}`, {
             headers: { Authorization: `Bearer ${CLOUDCONVERT_API_KEY}` }
           });
@@ -124,11 +140,9 @@ app.post('/', async (req, res) => {
           throw new Error('CloudConvert job failed to convert file to PDF');
         }
 
-        // Get the converted PDF URL
         const exportTask = jobResponse.data.data.tasks.find(task => task.operation === 'export/url');
         const pdfUrl = exportTask.result.files[0].url;
 
-        // Download the PDF
         const pdfResponse = await axios.get(pdfUrl, { responseType: 'arraybuffer' });
         fs.writeFileSync(tempPdfFilePath, Buffer.from(pdfResponse.data));
         console.log(`Converted ${fileExtension} to PDF at ${tempPdfFilePath}`);
@@ -154,9 +168,7 @@ app.post('/', async (req, res) => {
     let images = [];
     let conversionMethod = '';
 
-    // Try different conversion methods with fallbacks
     try {
-      // Method 1: pdf2pic with GraphicsMagick
       console.log('Starting PDF to JPEG conversion with pdf2pic (GraphicsMagick)');
       conversionMethod = 'pdf2pic';
       
@@ -168,7 +180,7 @@ app.post('/', async (req, res) => {
         scale: 2
       });
       
-      const result = await convert.bulk(-1); // Convert all pages
+      const result = await convert.bulk(-1);
       images = result.map((page, index) => path.join(outputDir, `page-${index + 1}.jpg`));
       console.log(`Successfully converted PDF to ${images.length} JPEGs with pdf2pic`);
     } catch (error1) {
@@ -176,15 +188,12 @@ app.post('/', async (req, res) => {
       console.error('pdf2pic error stack:', error1.stack);
       
       try {
-        // Method 2: Poppler's pdftoppm (first fallback)
         console.log('Falling back to Poppler pdftoppm');
         conversionMethod = 'poppler';
         
-        // Use pdftoppm to convert PDF to JPEGs
         const cmd = `pdftoppm -jpeg -r 200 "${tempPdfPath}" "${path.join(outputDir, 'page')}"`;
         await execPromise(cmd);
         
-        // Get all generated JPEG files
         images = fs.readdirSync(outputDir)
           .filter(file => file.endsWith('.jpg'))
           .map(file => path.join(outputDir, file))
@@ -200,21 +209,17 @@ app.post('/', async (req, res) => {
         console.error('Poppler error stack:', error2.stack);
 
         try {
-          // Method 3: pdf.js (second fallback)
           console.log('Falling back to pdf.js');
           conversionMethod = 'pdfjs';
 
-          // Load the PDF document
           const data = new Uint8Array(fs.readFileSync(tempPdfPath));
           const loadingTask = pdfjsLib.getDocument({ data });
           const pdfDocument = await loadingTask.promise;
 
-          // Process each page
           for (let i = 1; i <= pdfDocument.numPages; i++) {
             const page = await pdfDocument.getPage(i);
             const viewport = page.getViewport({ scale: 2.0 });
 
-            // Set up canvas for rendering
             const canvas = createCanvas(viewport.width, viewport.height);
             const context = canvas.getContext('2d');
             const renderContext = {
@@ -222,10 +227,8 @@ app.post('/', async (req, res) => {
               viewport: viewport
             };
 
-            // Render the page to canvas
             await page.render(renderContext).promise;
 
-            // Convert canvas to JPEG and save
             const outputPath = path.join(outputDir, `page-${i}.jpg`);
             const buffer = canvas.toBuffer('image/jpeg', { quality: 0.95 });
             fs.writeFileSync(outputPath, buffer);
@@ -238,7 +241,6 @@ app.post('/', async (req, res) => {
           console.error('pdf.js error stack:', error3.stack);
 
           try {
-            // Method 4: CloudConvert API (third fallback)
             console.log('Falling back to CloudConvert API');
             conversionMethod = 'cloudconvert';
 
@@ -269,10 +271,9 @@ app.post('/', async (req, res) => {
 
             const jobId = jobResponse.data.data.id;
 
-            // Wait for the job to complete
             let jobStatus;
             do {
-              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+              await new Promise(resolve => setTimeout(resolve, 1000));
               const statusResponse = await axios.get(`https://api.cloudconvert.com/v2/jobs/${jobId}`, {
                 headers: { Authorization: `Bearer ${CLOUDCONVERT_API_KEY}` }
               });
@@ -283,11 +284,9 @@ app.post('/', async (req, res) => {
               throw new Error('CloudConvert job failed to convert file to JPEG');
             }
 
-            // Get the converted JPEG URLs
             const exportTask = jobResponse.data.data.tasks.find(task => task.operation === 'export/url');
             const jpegUrls = exportTask.result.files.map(file => file.url);
 
-            // Download each JPEG
             for (let i = 0; i < jpegUrls.length; i++) {
               const jpegResponse = await axios.get(jpegUrls[i], { responseType: 'arraybuffer' });
               const outputPath = path.join(outputDir, `page-${i + 1}.jpg`);
@@ -301,15 +300,12 @@ app.post('/', async (req, res) => {
             console.error('CloudConvert error stack:', error4.stack);
 
             try {
-              // Method 5: PDFBox (fourth fallback, for PDFs only; Excel/Word already converted to PDF)
               console.log('Falling back to PDFBox');
               conversionMethod = 'pdfbox';
 
-              // Use PDFBox to convert PDF to JPEGs
               const cmd = `java -jar /usr/local/lib/pdfbox-app-2.0.27.jar PDFToImage -imageType jpg -dpi 200 "${tempPdfPath}"`;
               await execPromise(cmd);
 
-              // PDFBox outputs files with the pattern <filename>-<page>.jpg
               const pdfBaseName = path.basename(tempPdfPath, '.pdf');
               images = fs.readdirSync(tempDir)
                 .filter(file => file.startsWith(pdfBaseName) && file.endsWith('.jpg'))
@@ -320,7 +316,6 @@ app.post('/', async (req, res) => {
                   return pageA - pageB;
                 });
 
-              // Move files to outputDir
               images = images.map((imgPath, index) => {
                 const newPath = path.join(outputDir, `page-${index + 1}.jpg`);
                 fs.renameSync(imgPath, newPath);
@@ -331,7 +326,72 @@ app.post('/', async (req, res) => {
             } catch (error5) {
               console.error('PDFBox conversion failed:', error5.message);
               console.error('PDFBox error stack:', error5.stack);
-              throw new Error(`All conversion methods failed. Last error: ${error5.message}`);
+
+              try {
+                console.log('Falling back to Google Cloud Document AI');
+                conversionMethod = 'documentai';
+
+                const projectId = 'review-plugin-api-421208';
+                const location = 'us';
+                const processorId = 'YOUR_PROCESSOR_ID'; // Replace with your Document AI processor ID
+
+                const name = `projects/${projectId}/locations/${location}/processors/${processorId}`;
+
+                const fileBuffer = fs.readFileSync(tempPdfPath);
+                const encodedImage = fileBuffer.toString('base64');
+
+                const request = {
+                  name,
+                  rawDocument: {
+                    content: encodedImage,
+                    mimeType: 'application/pdf',
+                  },
+                };
+
+                const [result] = await documentaiClient.processDocument(request);
+                const { document } = result;
+
+                for (let i = 0; i < document.pages.length; i++) {
+                  const page = document.pages[i];
+                  const imageContent = page.image.content;
+                  const outputPath = path.join(outputDir, `page-${i + 1}.jpg`);
+                  fs.writeFileSync(outputPath, Buffer.from(imageContent, 'base64'));
+                  images.push(outputPath);
+                }
+
+                console.log(`Successfully converted PDF to ${images.length} JPEGs with Document AI`);
+              } catch (error6) {
+                console.error('Document AI conversion failed:', error6.message);
+                console.error('Document AI error stack:', error6.stack);
+
+                try {
+                  console.log('Falling back to Google Cloud Vision API');
+                  conversionMethod = 'visionapi';
+
+                  const fileBuffer = fs.readFileSync(tempPdfPath);
+                  const encodedImage = fileBuffer.toString('base64');
+
+                  const [result] = await visionClient.annotateImage({
+                    image: { content: encodedImage },
+                    features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
+                    imageContext: { pdf: true },
+                  });
+
+                  if (result.fullTextAnnotation && result.fullTextAnnotation.pages) {
+                    for (let i = 0; i < result.fullTextAnnotation.pages.length; i++) {
+                      const page = result.fullTextAnnotation.pages[i];
+                      const text = page.blocks.map(block => block.paragraphs.map(paragraph => paragraph.words.map(word => word.symbols.map(symbol => symbol.text).join('')).join(' ')).join('\n')).join('\n');
+                      console.log(`Extracted text from page ${i + 1}: ${text.substring(0, 100)}...`);
+                    }
+                  }
+
+                  throw new Error('Vision API does not support direct image extraction; use other methods for JPEG conversion');
+                } catch (error7) {
+                  console.error('Vision API conversion failed:', error7.message);
+                  console.error('Vision API error stack:', error7.stack);
+                  throw new Error(`All conversion methods failed. Last error: ${error7.message}`);
+                }
+              }
             }
           }
         }
@@ -342,13 +402,11 @@ app.post('/', async (req, res) => {
       throw new Error('No JPEGs were generated from the file');
     }
 
-    // Authenticate with Google Drive
     console.log('Authenticating with Google Drive');
     const auth = new google.auth.OAuth2();
     auth.setCredentials({ access_token: accessToken });
     const drive = google.drive({ version: 'v3', auth });
 
-    // Upload JPEGs to Drive
     const jpegResults = [];
     for (let i = 0; i < images.length; i++) {
       const imagePath = images[i];
