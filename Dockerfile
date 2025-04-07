@@ -1,11 +1,21 @@
 FROM node:18
 
-# Install dependencies for pdf2pic (GraphicsMagick, Ghostscript, Poppler) and ImageMagick as fallback
+# Install dependencies for pdf2pic (GraphicsMagick, Ghostscript, Poppler) and ImageMagick
 RUN apt-get update && apt-get install -y \
     poppler-utils \
     ghostscript \
     graphicsmagick \
     imagemagick \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies for canvas (required for pdf.js rendering)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libjpeg-dev \
+    libgif-dev \
+    librsvg2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Configure ImageMagick policy to allow PDF conversion

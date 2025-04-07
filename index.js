@@ -9,6 +9,8 @@ const { exec } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 const gm = require('gm');
+const pdfjsLib = require('pdfjs-dist');
+const { createCanvas } = require('canvas');
 
 // Configure gm to use GraphicsMagick
 const gmWithPath = gm.subClass({ imageMagick: false });
@@ -92,7 +94,7 @@ app.post('/', async (req, res) => {
       console.error('pdf2pic error stack:', error1.stack);
       
       try {
-        // Method 2: Poppler's pdftoppm (fallback)
+        // Method 2: Poppler's pdftoppm (first fallback)
         console.log('Falling back to Poppler pdftoppm');
         conversionMethod = 'poppler';
         
@@ -114,7 +116,46 @@ app.post('/', async (req, res) => {
       } catch (error2) {
         console.error('Poppler conversion failed:', error2.message);
         console.error('Poppler error stack:', error2.stack);
-        throw new Error(`All PDF conversion methods failed. Last error: ${error2.message}`);
+
+        try {
+          // Method 3: pdf.js (second fallback)
+          console.log('Falling back to pdf.js');
+          conversionMethod = 'pdfjs';
+
+          // Load the PDF document
+          const data = new Uint8Array(fs.readFileSync(tempPdfPath));
+          const loadingTask = pdfjsLib.getDocument({ data });
+          const pdfDocument = await loadingTask.promise;
+
+          // Process each page
+          for (let i = 1; i <= pdfDocument.numPages; i++) {
+            const page = await pdfDocument.getPage(i);
+            const viewport = page.getViewport({ scale: 2.0 });
+
+            // Set up canvas for rendering
+            const canvas = createCanvas(viewport.width, viewport.height);
+            const context = canvas.getContext('2d');
+            const renderContext = {
+              canvasContext: context,
+              viewport: viewport
+            };
+
+            // Render the page to canvas
+            await page.render(renderContext).promise;
+
+            // Convert canvas to JPEG and save
+            const outputPath = path.join(outputDir, `page-${i}.jpg`);
+            const buffer = canvas.toBuffer('image/jpeg', { quality: 0.95 });
+            fs.writeFileSync(outputPath, buffer);
+            images.push(outputPath);
+          }
+
+          console.log(`Successfully converted PDF to ${images.length} JPEGs with pdf.js`);
+        } catch (error3) {
+          console.error('pdf.js conversion failed:', error3.message);
+          console.error('pdf.js error stack:', error3.stack);
+          throw new Error(`All PDF conversion methods failed. Last error: ${error3.message}`);
+        }
       }
     }
 
