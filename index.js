@@ -11,9 +11,13 @@ const execPromise = util.promisify(exec);
 const gm = require('gm');
 const pdfjsLib = require('pdfjs-dist');
 const { createCanvas } = require('canvas');
+const axios = require('axios');
 
 // Configure gm to use GraphicsMagick
 const gmWithPath = gm.subClass({ imageMagick: false });
+
+// CloudConvert API Key (replace with your actual key)
+const CLOUDCONVERT_API_KEY = 'your-cloudconvert-api-key-here'; // Replace with your CloudConvert API key
 
 const app = express();
 app.use(bodyParser.json({ limit: '100mb' }));
@@ -30,7 +34,7 @@ app.get('/health', (req, res) => {
 });
 
 app.post('/', async (req, res) => {
-  console.log('PDF to JPEG conversion requested');
+  console.log('File to JPEG conversion requested');
   
   try {
     // Log the incoming request size
@@ -45,21 +49,99 @@ app.post('/', async (req, res) => {
 
     console.log(`Received file: ${fileName}, fileData length: ${fileData.length}`);
 
-    // Save PDF temporarily
+    // Determine file type based on extension
+    const fileExtension = path.extname(fileName).toLowerCase();
+    const isPDF = fileExtension === '.pdf';
+    const isExcel = ['.xlsx', '.xls'].includes(fileExtension);
+    const isWord = ['.docx', '.doc'].includes(fileExtension);
+
+    if (!isPDF && !isExcel && !isWord) {
+      throw new Error(`Unsupported file type: ${fileExtension}. Only PDF, Excel, and Word files are supported.`);
+    }
+
+    // Save the file temporarily
     const tempDir = os.tmpdir();
-    const tempPdfPath = path.join(tempDir, `${fileName}.pdf`);
+    const tempFilePath = path.join(tempDir, `${fileName}`);
+    let tempPdfPath = tempFilePath;
+
     try {
-      console.log(`Writing PDF to ${tempPdfPath}`);
-      fs.writeFileSync(tempPdfPath, Buffer.from(fileData, 'base64'));
-      console.log(`Saved PDF to ${tempPdfPath}`);
+      console.log(`Writing file to ${tempFilePath}`);
+      fs.writeFileSync(tempFilePath, Buffer.from(fileData, 'base64'));
+      console.log(`Saved file to ${tempFilePath}`);
     } catch (writeError) {
-      console.error('Error writing PDF file:', writeError.message);
+      console.error('Error writing file:', writeError.message);
       console.error('Write error stack:', writeError.stack);
-      throw new Error(`Failed to write PDF file: ${writeError.message}`);
+      throw new Error(`Failed to write file: ${writeError.message}`);
+    }
+
+    // If the file is Excel or Word, convert it to PDF first using CloudConvert
+    if (isExcel || isWord) {
+      console.log(`Converting ${fileExtension} file to PDF using CloudConvert`);
+      try {
+        const inputFormat = isExcel ? 'xlsx' : 'docx';
+        const outputFormat = 'pdf';
+        const tempPdfFilePath = path.join(tempDir, `${path.basename(fileName, fileExtension)}.pdf`);
+
+        // Create CloudConvert job to convert Excel/Word to PDF
+        const jobResponse = await axios.post('https://api.cloudconvert.com/v2/jobs', {
+          tasks: {
+            'import-file': {
+              operation: 'import/base64',
+              file: fileData,
+              filename: fileName
+            },
+            'convert-file': {
+              operation: 'convert',
+              input: 'import-file',
+              output_format: outputFormat,
+              some_option: 'value'
+            },
+            'export-file': {
+              operation: 'export/url',
+              input: 'convert-file'
+            }
+          }
+        }, {
+          headers: {
+            Authorization: `Bearer ${CLOUDCONVERT_API_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        const jobId = jobResponse.data.data.id;
+
+        // Wait for the job to complete
+        let jobStatus;
+        do {
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+          const statusResponse = await axios.get(`https://api.cloudconvert.com/v2/jobs/${jobId}`, {
+            headers: { Authorization: `Bearer ${CLOUDCONVERT_API_KEY}` }
+          });
+          jobStatus = statusResponse.data.data.status;
+        } while (jobStatus !== 'finished' && jobStatus !== 'error');
+
+        if (jobStatus === 'error') {
+          throw new Error('CloudConvert job failed to convert file to PDF');
+        }
+
+        // Get the converted PDF URL
+        const exportTask = jobResponse.data.data.tasks.find(task => task.operation === 'export/url');
+        const pdfUrl = exportTask.result.files[0].url;
+
+        // Download the PDF
+        const pdfResponse = await axios.get(pdfUrl, { responseType: 'arraybuffer' });
+        fs.writeFileSync(tempPdfFilePath, Buffer.from(pdfResponse.data));
+        console.log(`Converted ${fileExtension} to PDF at ${tempPdfFilePath}`);
+
+        tempPdfPath = tempPdfFilePath;
+      } catch (cloudConvertError) {
+        console.error('CloudConvert conversion to PDF failed:', cloudConvertError.message);
+        throw new Error(`Failed to convert ${fileExtension} to PDF: ${cloudConvertError.message}`);
+      }
     }
 
     // Convert PDF to JPEG using multiple methods with fallbacks
-    const outputDir = path.join(tempDir, `${fileName}-images`);
+    const outputDir = path.join(tempDir, `${path.basename(fileName, path.extname(fileName))}-images`);
     try {
       console.log(`Creating output directory: ${outputDir}`);
       if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
@@ -154,13 +236,110 @@ app.post('/', async (req, res) => {
         } catch (error3) {
           console.error('pdf.js conversion failed:', error3.message);
           console.error('pdf.js error stack:', error3.stack);
-          throw new Error(`All PDF conversion methods failed. Last error: ${error3.message}`);
+
+          try {
+            // Method 4: CloudConvert API (third fallback)
+            console.log('Falling back to CloudConvert API');
+            conversionMethod = 'cloudconvert';
+
+            const jobResponse = await axios.post('https://api.cloudconvert.com/v2/jobs', {
+              tasks: {
+                'import-file': {
+                  operation: 'import/base64',
+                  file: fileData,
+                  filename: fileName
+                },
+                'convert-file': {
+                  operation: 'convert',
+                  input: 'import-file',
+                  output_format: 'jpg',
+                  some_option: 'value'
+                },
+                'export-file': {
+                  operation: 'export/url',
+                  input: 'convert-file'
+                }
+              }
+            }, {
+              headers: {
+                Authorization: `Bearer ${CLOUDCONVERT_API_KEY}`,
+                'Content-Type': 'application/json'
+              }
+            });
+
+            const jobId = jobResponse.data.data.id;
+
+            // Wait for the job to complete
+            let jobStatus;
+            do {
+              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+              const statusResponse = await axios.get(`https://api.cloudconvert.com/v2/jobs/${jobId}`, {
+                headers: { Authorization: `Bearer ${CLOUDCONVERT_API_KEY}` }
+              });
+              jobStatus = statusResponse.data.data.status;
+            } while (jobStatus !== 'finished' && jobStatus !== 'error');
+
+            if (jobStatus === 'error') {
+              throw new Error('CloudConvert job failed to convert file to JPEG');
+            }
+
+            // Get the converted JPEG URLs
+            const exportTask = jobResponse.data.data.tasks.find(task => task.operation === 'export/url');
+            const jpegUrls = exportTask.result.files.map(file => file.url);
+
+            // Download each JPEG
+            for (let i = 0; i < jpegUrls.length; i++) {
+              const jpegResponse = await axios.get(jpegUrls[i], { responseType: 'arraybuffer' });
+              const outputPath = path.join(outputDir, `page-${i + 1}.jpg`);
+              fs.writeFileSync(outputPath, Buffer.from(jpegResponse.data));
+              images.push(outputPath);
+            }
+
+            console.log(`Successfully converted file to ${images.length} JPEGs with CloudConvert`);
+          } catch (error4) {
+            console.error('CloudConvert conversion failed:', error4.message);
+            console.error('CloudConvert error stack:', error4.stack);
+
+            try {
+              // Method 5: PDFBox (fourth fallback, for PDFs only; Excel/Word already converted to PDF)
+              console.log('Falling back to PDFBox');
+              conversionMethod = 'pdfbox';
+
+              // Use PDFBox to convert PDF to JPEGs
+              const cmd = `java -jar /usr/local/lib/pdfbox-app-2.0.27.jar PDFToImage -imageType jpg -dpi 200 "${tempPdfPath}"`;
+              await execPromise(cmd);
+
+              // PDFBox outputs files with the pattern <filename>-<page>.jpg
+              const pdfBaseName = path.basename(tempPdfPath, '.pdf');
+              images = fs.readdirSync(tempDir)
+                .filter(file => file.startsWith(pdfBaseName) && file.endsWith('.jpg'))
+                .map(file => path.join(tempDir, file))
+                .sort((a, b) => {
+                  const pageA = parseInt(path.basename(a).match(/\d+/)[0] || '0');
+                  const pageB = parseInt(path.basename(b).match(/\d+/)[0] || '0');
+                  return pageA - pageB;
+                });
+
+              // Move files to outputDir
+              images = images.map((imgPath, index) => {
+                const newPath = path.join(outputDir, `page-${index + 1}.jpg`);
+                fs.renameSync(imgPath, newPath);
+                return newPath;
+              });
+
+              console.log(`Successfully converted PDF to ${images.length} JPEGs with PDFBox`);
+            } catch (error5) {
+              console.error('PDFBox conversion failed:', error5.message);
+              console.error('PDFBox error stack:', error5.stack);
+              throw new Error(`All conversion methods failed. Last error: ${error5.message}`);
+            }
+          }
         }
       }
     }
 
     if (images.length === 0) {
-      throw new Error('No JPEGs were generated from the PDF');
+      throw new Error('No JPEGs were generated from the file');
     }
 
     // Authenticate with Google Drive
@@ -187,7 +366,7 @@ app.post('/', async (req, res) => {
         console.log(`Uploading page ${i + 1} to Drive`);
         const uploaded = await drive.files.create({
           requestBody: {
-            name: `${fileName}_page${i + 1}.jpg`,
+            name: `${path.basename(fileName, path.extname(fileName))}_page${i + 1}.jpg`,
             parents: [folderId],
             mimeType: 'image/jpeg'
           },
@@ -217,15 +396,19 @@ app.post('/', async (req, res) => {
     }
 
     try {
-      console.log(`Cleaning up PDF file: ${tempPdfPath}`);
-      fs.unlinkSync(tempPdfPath);
+      console.log(`Cleaning up original file: ${tempFilePath}`);
+      fs.unlinkSync(tempFilePath);
+      if (tempPdfPath !== tempFilePath) {
+        console.log(`Cleaning up converted PDF file: ${tempPdfPath}`);
+        fs.unlinkSync(tempPdfPath);
+      }
     } catch (unlinkError) {
-      console.error(`Error cleaning up PDF file ${tempPdfPath}:`, unlinkError.message);
+      console.error(`Error cleaning up files: ${unlinkError.message}`);
     }
 
     res.status(200).json({ success: true, jpegs: jpegResults });
   } catch (error) {
-    console.error('❌ Error in PDF-to-JPEG conversion:', error.message);
+    console.error('❌ Error in file-to-JPEG conversion:', error.message);
     console.error('Stack trace:', error.stack);
     res.status(500).json({ success: false, error: error.message, stack: error.stack });
   }
