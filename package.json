@@ -9,6 +9,8 @@
       "googleapis": "^105.0.0",
       "pdfjs-dist": "^3.11.174",
       "canvas": "^2.11.2",
-      "axios": "^1.7.2"
+      "axios": "^1.7.2",
+      "@google-cloud/documentai": "^5.4.0",
+      "@google-cloud/vision": "^3.1.5"
     }
   }
